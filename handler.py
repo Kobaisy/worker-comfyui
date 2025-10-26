@@ -537,7 +537,7 @@ def handler(job):
     ws = None
     client_id = str(uuid.uuid4())
     prompt_id = None
-    output_data = []
+    output_data = {"images": [], "text": []}
     errors = []
 
     try:
@@ -658,6 +658,27 @@ def handler(job):
 
         prompt_history = history.get(prompt_id, {})
         outputs = prompt_history.get("outputs", {})
+        
+        # Extract text outputs
+        if "text" not in output_data:
+            output_data["text"] = []
+
+        for node_id, node_output in outputs.items():
+            if isinstance(node_output, dict):
+                # Check for text in various possible formats
+                if "text" in node_output:
+                    text_data = node_output["text"]
+                    if isinstance(text_data, list):
+                        output_data["text"].extend(text_data)
+                    else:
+                        output_data["text"].append(text_data)
+                # Also check for string outputs
+                if "string" in node_output:
+                    string_data = node_output["string"]
+                    if isinstance(string_data, list):
+                        output_data["text"].extend(string_data)
+                    else:
+                        output_data["text"].append(string_data)
 
         if not outputs:
             warning_msg = f"No outputs found in history for prompt {prompt_id}."
@@ -712,11 +733,10 @@ def handler(job):
                                     f"worker-comfyui - Uploaded {filename} to S3: {s3_url}"
                                 )
                                 # Append dictionary with filename and URL
-                                output_data.append(
-                                    {
-                                        "filename": filename,
-                                        "type": "s3_url",
-                                        "data": s3_url,
+                                output_data["images"].append({
+                                    "filename": filename,
+                                    "type": "s3_url",
+                                    "data": s3_url,
                                     }
                                 )
                             except Exception as e:
@@ -739,13 +759,11 @@ def handler(job):
                                     "utf-8"
                                 )
                                 # Append dictionary with filename and base64 data
-                                output_data.append(
-                                    {
-                                        "filename": filename,
-                                        "type": "base64",
-                                        "data": base64_image,
-                                    }
-                                )
+                                output_data["images"].append({
+                                    "filename": filename,
+                                    "type": "base64",
+                                    "data": base64_image,
+                                    })
                                 print(f"worker-comfyui - Encoded {filename} as base64")
                             except Exception as e:
                                 error_msg = f"Error encoding {filename} to base64: {e}"
@@ -789,27 +807,31 @@ def handler(job):
 
     final_result = {}
 
-    if output_data:
-        final_result["images"] = output_data
+    if output_data.get("images"):
+        final_result["images"] = output_data["images"]
+    if output_data.get("text"):
+        final_result["text"] = output_data["text"]
+
 
     if errors:
         final_result["errors"] = errors
         print(f"worker-comfyui - Job completed with errors/warnings: {errors}")
 
-    if not output_data and errors:
+    if not output_data["images"] and not output_data.get("text") and errors:
         print(f"worker-comfyui - Job failed with no output images.")
         return {
             "error": "Job processing failed",
             "details": errors,
         }
-    elif not output_data and not errors:
+    elif not output_data["images"] and not output_data.get("text") and not errors:
         print(
             f"worker-comfyui - Job completed successfully, but the workflow produced no images."
         )
         final_result["status"] = "success_no_images"
         final_result["images"] = []
+        final_result["text"] = []
 
-    print(f"worker-comfyui - Job completed. Returning {len(output_data)} image(s).")
+    print(f"worker-comfyui - Job completed. Returning {len(output_data['images'])} image(s) and {len(output_data.get('text', []))} text output(s).")
     return final_result
 
 
